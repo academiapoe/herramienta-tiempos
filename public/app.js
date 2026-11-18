@@ -107,6 +107,27 @@ function opcionesProyecto(sel, { vacio = 'Sin proyecto' } = {}) {
 
 const LOGO = `<svg width="34" height="34" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="17" r="12" fill="#507479"/><path d="M16 10v7l4 3" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/><rect x="13" y="2" width="6" height="3" rx="1.5" fill="#AB8A4D"/></svg>`;
 
+function logoHtml() {
+  return S.estado && S.estado.logo
+    ? `<img class="logo-img" src="/api/logo?v=${encodeURIComponent(S.estado.logo)}" alt="">`
+    : LOGO;
+}
+
+function mezclar(hex, con, peso) {
+  const a = hex.match(/\w\w/g).map((x) => parseInt(x, 16));
+  const b = con.match(/\w\w/g).map((x) => parseInt(x, 16));
+  return '#' + a.map((v, i) => Math.round(v * (1 - peso) + b[i] * peso).toString(16).padStart(2, '0')).join('');
+}
+
+function aplicarMarca() {
+  const c = S.estado && /^#[0-9a-fA-F]{6}$/.test(S.estado.color || '') ? S.estado.color : '#507479';
+  const r = document.documentElement.style;
+  r.setProperty('--principal', c);
+  r.setProperty('--principal-oscuro', mezclar(c, '#000000', 0.25));
+  r.setProperty('--principal-suave', mezclar(c, '#ffffff', 0.86));
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', c);
+}
+
 // ---------- arranque ----------
 async function cargarEstado() {
   S.estado = await api('/estado');
@@ -132,6 +153,7 @@ function ruta() {
 
 function pintar() {
   clearInterval(S.tic);
+  aplicarMarca();
   const [seccion, extra] = ruta();
   if (seccion === 'invitacion' && extra && !S.estado.persona) return pantallaUnirse(extra);
   if (!S.estado.configurado) return pantallaConfigurar();
@@ -143,7 +165,7 @@ function pintar() {
 function cajaAcceso(titulo, intro, campos, boton, alEnviar, pie = '') {
   $app.innerHTML = `
     <div class="acceso"><div class="caja">
-      <div class="logo">${LOGO}<strong>${esc(S.estado.espacio || 'Tiempos del equipo')}</strong></div>
+      <div class="logo">${logoHtml()}<strong>${esc(S.estado.espacio || 'Tiempos del equipo')}</strong></div>
       <h1>${titulo}</h1>
       <p class="suave">${intro}</p>
       <form novalidate>${campos}<p class="error" id="err"></p><button type="submit">${boton}</button></form>
@@ -203,7 +225,7 @@ function pantallaEntrar() {
 async function pantallaUnirse(token) {
   let inv;
   try { inv = await api('/invitacion/' + encodeURIComponent(token)); } catch (e) {
-    $app.innerHTML = `<div class="acceso"><div class="caja"><div class="logo">${LOGO}<strong>Tiempos del equipo</strong></div><h1>Vaya</h1><p>${esc(e.message)}</p><a href="#/">Ir a la entrada</a></div></div>`;
+    $app.innerHTML = `<div class="acceso"><div class="caja"><div class="logo">${logoHtml()}<strong>Tiempos del equipo</strong></div><h1>Vaya</h1><p>${esc(e.message)}</p><a href="#/">Ir a la entrada</a></div></div>`;
     return;
   }
   S.estado.espacio = inv.espacio;
@@ -232,7 +254,7 @@ function pantallaApp(seccion) {
 
   $app.innerHTML = `
     <header class="cabecera"><div class="dentro">
-      <div class="logo">${LOGO}<strong>${esc(S.estado.espacio)}</strong></div>
+      <div class="logo">${logoHtml()}<strong>${esc(S.estado.espacio)}</strong></div>
       <nav class="menu">${menu.map(([k, n]) => `<a href="#/${k}" class="${k === seccion ? 'activo' : ''}">${n}</a>`).join('')}</nav>
     </div></header>
     <main>
@@ -684,10 +706,26 @@ function secCuenta() {
       </form>
     </div>
     ${esResp() ? `<div class="tarjeta">
-      <h2>Nombre del espacio</h2>
-      <form id="espacio" class="fila" novalidate>
-        <div class="campo" style="margin:0"><label for="e-nom">Nombre</label><input id="e-nom" name="espacio" value="${esc(S.estado.espacio)}"></div>
-        <button class="fijo" type="submit">Guardar</button>
+      <h2>Personalizar</h2>
+      <p class="suave">Ponle el nombre, el color y el logo de tu negocio. Tu equipo los verá al entrar.</p>
+      <form id="marca" novalidate>
+        <div class="campo"><label for="e-nom">Nombre del espacio</label><input id="e-nom" name="espacio" value="${esc(S.estado.espacio)}"></div>
+        <div class="campo"><label for="e-col">Color principal</label>
+          <div class="fila" style="align-items:center">
+            <input id="e-col" type="color" class="fijo" value="${esc(S.estado.color || '#507479')}">
+            <input id="e-hex" name="color" value="${esc(S.estado.color || '#507479')}" placeholder="#507479" maxlength="7" style="max-width:140px">
+            <button type="button" class="sec mini fijo" id="e-colreset">Volver al de serie</button>
+          </div>
+        </div>
+        <div class="campo"><label for="e-logo">Logo (PNG o JPG)</label>
+          <div class="logo-prev" id="e-prev">${S.estado.logo ? logoHtml() : '<span class="suave">Sin logo: sale el reloj.</span>'}</div>
+          <div class="fila" style="align-items:center">
+            <input id="e-logo" type="file" accept="image/png,image/jpeg,image/webp">
+            ${S.estado.logo ? '<button type="button" class="peligro mini fijo" id="e-quitar">Quitar logo</button>' : ''}
+          </div>
+        </div>
+        <p class="error" id="err-marca"></p>
+        <button type="submit">Guardar</button>
       </form>
     </div>` : ''}`;
   cont.querySelector('#salir').addEventListener('click', async () => {
@@ -700,9 +738,52 @@ function secCuenta() {
     try { await api('/mi-clave', { metodo: 'POST', datos: Object.fromEntries(new FormData(fc)) }); fc.reset(); fc.querySelector('#err-clave').textContent = ''; aviso('Contraseña cambiada.'); }
     catch (e) { fc.querySelector('#err-clave').textContent = e.message; }
   });
-  const fe = cont.querySelector('#espacio');
-  if (fe) fe.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    try { await api('/espacio', { metodo: 'PATCH', datos: { espacio: fe.espacio.value } }); S.estado.espacio = fe.espacio.value.trim(); pintar(); aviso('Guardado.'); } catch (e) { aviso(e.message); }
+  const fm = cont.querySelector('#marca');
+  if (fm) {
+    let logoNuevo; // undefined = sin cambios, '' = quitar, dataURL = nuevo
+    const col = fm.querySelector('#e-col'), hex = fm.querySelector('#e-hex');
+    col.addEventListener('input', () => { hex.value = col.value; });
+    hex.addEventListener('input', () => { if (/^#[0-9a-fA-F]{6}$/.test(hex.value)) col.value = hex.value; });
+    fm.querySelector('#e-colreset').addEventListener('click', () => { col.value = hex.value = '#507479'; });
+    fm.querySelector('#e-quitar')?.addEventListener('click', () => { logoNuevo = ''; fm.querySelector('#e-prev').innerHTML = '<span class="suave">Sin logo: sale el reloj.</span>'; });
+    fm.querySelector('#e-logo').addEventListener('change', async (ev) => {
+      const f = ev.target.files[0];
+      if (!f) return;
+      try {
+        logoNuevo = await reducirImagen(f);
+        fm.querySelector('#e-prev').innerHTML = `<img class="logo-img" src="${logoNuevo}" alt="">`;
+      } catch { fm.querySelector('#err-marca').textContent = 'No he podido leer esa imagen. Prueba con un PNG o un JPG.'; }
+    });
+    fm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const datos = { espacio: fm.espacio.value, color: hex.value.trim() === '#507479' ? '' : hex.value.trim() };
+      if (logoNuevo !== undefined) datos.logo = logoNuevo;
+      try {
+        await api('/espacio', { metodo: 'PATCH', datos });
+        S.estado = { ...S.estado, ...(await api('/estado')) };
+        pintar(); aviso('Guardado.');
+      } catch (e) { fm.querySelector('#err-marca').textContent = e.message; }
+    });
+  }
+}
+
+// Reduce el logo a 480 px de ancho como mucho y lo pasa a PNG
+function reducirImagen(archivo) {
+  return new Promise((ok, mal) => {
+    const lector = new FileReader();
+    lector.onerror = mal;
+    lector.onload = () => {
+      const img = new Image();
+      img.onerror = mal;
+      img.onload = () => {
+        const escala = Math.min(1, 480 / img.width, 160 / img.height);
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * escala); c.height = Math.round(img.height * escala);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        ok(c.toDataURL('image/png'));
+      };
+      img.src = lector.result;
+    };
+    lector.readAsDataURL(archivo);
   });
 }

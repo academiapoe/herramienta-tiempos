@@ -143,6 +143,11 @@ async function personaDeSesion(env, req) {
   return { id: fila.id, email: fila.email, nombre: fila.nombre, rol: fila.rol, token: m[1] };
 }
 
+async function leerAjustes(env) {
+  const r = await env.DB.prepare('SELECT clave, valor FROM ajustes').all();
+  return Object.fromEntries(r.results.map((x) => [x.clave, x.valor]));
+}
+
 async function mesCerrado(env, mes) {
   const f = await env.DB.prepare('SELECT cerrado FROM meses_cerrados WHERE mes = ?').bind(mes).first();
   return !!(f && f.cerrado);
@@ -187,13 +192,23 @@ async function manejarApi(req, env, url) {
   if (ruta === '/estado' && metodo === 'GET') {
     const hay = await env.DB.prepare('SELECT COUNT(*) n FROM personas').first();
     const persona = await personaDeSesion(env, req);
-    const nombre = await env.DB.prepare("SELECT valor FROM ajustes WHERE clave = 'espacio'").first();
+    const aj = await leerAjustes(env);
     return json({
       configurado: hay.n > 0,
-      espacio: nombre ? nombre.valor : '',
+      espacio: aj.espacio || '',
+      color: aj.color || '',
+      logo: aj.logo ? aj.logo_v || '1' : '',
       zona: env.ZONA_HORARIA || 'Europe/Madrid',
       persona: persona ? { id: persona.id, email: persona.email, nombre: persona.nombre, rol: persona.rol } : null,
     });
+  }
+
+  if (ruta === '/logo' && metodo === 'GET') {
+    const aj = await leerAjustes(env);
+    const m = (aj.logo || '').match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/);
+    if (!m) fallo(404, 'No hay logo.');
+    const bin = Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0));
+    return new Response(bin, { headers: { 'content-type': m[1], 'cache-control': 'public, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' } });
   }
 
   if (ruta === '/configurar' && metodo === 'POST') {
@@ -273,9 +288,23 @@ async function manejarApi(req, env, url) {
   // Espacio
   if (ruta === '/espacio' && metodo === 'PATCH') {
     soloResp();
-    const espacio = texto(cuerpo.espacio, 80);
-    if (!espacio) fallo(400, 'Escribe un nombre.');
-    await env.DB.prepare("INSERT OR REPLACE INTO ajustes (clave, valor) VALUES ('espacio', ?)").bind(espacio).run();
+    const guardar = (clave, valor) => env.DB.prepare('INSERT OR REPLACE INTO ajustes (clave, valor) VALUES (?, ?)').bind(clave, valor).run();
+    if (cuerpo.espacio !== undefined) {
+      const espacio = texto(cuerpo.espacio, 80);
+      if (!espacio) fallo(400, 'Escribe un nombre.');
+      await guardar('espacio', espacio);
+    }
+    if (cuerpo.color !== undefined) {
+      if (cuerpo.color && !/^#[0-9a-fA-F]{6}$/.test(cuerpo.color)) fallo(400, 'El color tiene que ir así: #507479.');
+      await guardar('color', cuerpo.color || '');
+    }
+    if (cuerpo.logo !== undefined) {
+      const logo = String(cuerpo.logo || '');
+      if (logo && !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(logo)) fallo(400, 'El logo tiene que ser una imagen PNG, JPG o WEBP.');
+      if (logo.length > 400000) fallo(400, 'El logo pesa demasiado. Prueba con una imagen más pequeña.');
+      await guardar('logo', logo);
+      await guardar('logo_v', String(Date.now()));
+    }
     return json({ ok: true });
   }
 

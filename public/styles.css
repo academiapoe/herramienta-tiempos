@@ -189,3 +189,7 @@ dialog form { padding: 22px; }
   .dato { padding: 10px 12px; }
   .dato .num { font-size: 1.2rem; }
 }
+.logo-img { height: 34px; max-width: 170px; object-fit: contain; display: block; }
+.logo-prev { min-height: 50px; display: flex; align-items: center; padding: 8px 12px; border: 1px dashed var(--linea); border-radius: 10px; margin-bottom: 8px; background: #fff; }
+.logo-prev .logo-img { height: 44px; max-width: 220px; }
+input[type=file] { padding: 8px; }
